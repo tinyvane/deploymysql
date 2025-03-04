@@ -4,6 +4,10 @@
 # 作者：Claude
 # 日期：2024-02-26
 
+# 脚本版本
+SCRIPT_VERSION="1.0.0"
+GITHUB_REPO="tinyvane/deploymysql"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,11 +18,9 @@ NC='\033[0m' # No Color
 # 数据库配置
 DB_NAME="consulting_project_management"
 DB_USER="app_user"
-# 提示用户输入密码
-read -sp "请输入应用数据库用户密码: " DB_PASS
-echo
-read -sp "请输入MySQL root密码: " MYSQL_ROOT_PASS
-echo
+# 密码变量初始化为空，将在需要时提示用户输入
+DB_PASS=""
+MYSQL_ROOT_PASS=""
 
 # 打印带颜色的信息
 print_info() {
@@ -35,6 +37,20 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[错误]${NC} $1"
+}
+
+# 获取数据库密码
+get_database_passwords() {
+    # 只有当密码为空时才询问
+    if [ -z "$DB_PASS" ]; then
+        read -sp "请输入应用数据库用户密码: " DB_PASS
+        echo
+    fi
+    
+    if [ -z "$MYSQL_ROOT_PASS" ]; then
+        read -sp "请输入MySQL root密码: " MYSQL_ROOT_PASS
+        echo
+    fi
 }
 
 # 检查是否以root用户运行
@@ -78,6 +94,9 @@ detect_distro() {
 
 # 安装MySQL - Debian/Ubuntu
 install_mysql_debian() {
+    # 获取密码
+    get_database_passwords
+    
     print_info "在 Debian/Ubuntu 上安装 MySQL..."
     
     # 更新软件包列表
@@ -97,6 +116,9 @@ install_mysql_debian() {
 
 # 安装MariaDB - 作为替代方案
 install_mariadb() {
+    # 获取密码
+    get_database_passwords
+    
     print_info "安装 MariaDB 作为替代方案..."
     
     if command -v dnf >/dev/null; then
@@ -126,101 +148,18 @@ install_mariadb() {
             return 1
         }
     else
-        print_error "无法确定如何安装 MariaDB"
+        print_error "无法安装MariaDB，未找到支持的包管理器"
         return 1
     fi
     
-    # 检查MariaDB是否安装成功
-    if ! command -v mysql >/dev/null 2>&1; then
-        print_error "MariaDB客户端命令不可用，安装可能失败"
-        return 1
-    fi
-    
-    # 检查服务名称
-    local service_name=""
-    if systemctl list-unit-files | grep -q mariadb.service; then
-        service_name="mariadb"
-    elif systemctl list-unit-files | grep -q mysql.service; then
-        service_name="mysql"
-    else
-        print_warning "找不到MariaDB服务单元，尝试使用mysqld"
-        service_name="mysqld"
-    fi
-    
-    print_info "使用服务名: $service_name"
-    
-    # 启动服务
-    systemctl start $service_name || {
-        print_error "无法启动 $service_name 服务"
-        return 1
-    }
-    
-    # 设置开机自启
-    systemctl enable $service_name || {
-        print_warning "无法设置 $service_name 服务开机自启"
-    }
-    
-    # 等待服务完全启动
-    sleep 5
-    
-    # 设置root密码
-    if command -v mysqladmin >/dev/null 2>&1; then
-        mysqladmin -u root password "$MYSQL_ROOT_PASS" || {
-            print_warning "无法使用mysqladmin设置root密码，尝试替代方法"
-            if command -v mysql >/dev/null 2>&1; then
-                mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';" || {
-                    print_warning "替代方法也失败，尝试MariaDB特定方法"
-                    mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$MYSQL_ROOT_PASS');" || {
-                        print_warning "所有方法都失败，请手动设置root密码"
-                    }
-                }
-            else
-                print_warning "mysql命令不可用，请手动设置root密码"
-            fi
-        }
-    else
-        print_warning "mysqladmin命令不可用，尝试使用mysql命令"
-        if command -v mysql >/dev/null 2>&1; then
-            mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';" || {
-                print_warning "无法设置root密码，尝试MariaDB特定方法"
-                mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$MYSQL_ROOT_PASS');" || {
-                    print_warning "所有方法都失败，请手动设置root密码"
-                }
-            }
-        else
-            print_warning "mysql命令不可用，请手动设置root密码"
-        fi
-    fi
-    
-    print_success "MariaDB 安装完成"
-    return 0
-}
-
-# 专门针对 Rocky Linux 9 的安装函数
-install_rocky9_mariadb() {
-    print_info "在 Rocky Linux 9 上安装 MariaDB..."
-    
-    # 添加官方 MariaDB 仓库
-    print_info "添加官方 MariaDB 仓库..."
-    curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash || {
-        print_error "添加 MariaDB 仓库失败"
-        return 1
-    }
-    print_success "MariaDB 仓库添加成功"
-    
-    # 安装 MariaDB 服务器
-    print_info "安装 MariaDB 服务器..."
-    dnf install -y mariadb-server || {
-        print_error "MariaDB 安装失败"
-        return 1
-    }
-    
-    # 启动并启用 MariaDB 服务
+    # 启动MariaDB服务
     print_info "启动 MariaDB 服务..."
     systemctl start mariadb || {
         print_error "无法启动 MariaDB 服务"
         return 1
     }
+    
+    # 设置开机自启
     print_info "设置 MariaDB 开机自启..."
     systemctl enable mariadb
     
@@ -326,93 +265,89 @@ EOF
         firewall-cmd --permanent --add-service=mysql
         firewall-cmd --reload
         print_success "防火墙配置完成"
+    elif command -v ufw >/dev/null 2>&1; then
+        print_info "配置UFW防火墙..."
+        ufw allow mysql
+        print_success "UFW防火墙配置完成"
+    else
+        print_warning "未检测到支持的防火墙，请手动开放3306端口"
     fi
-    
-    # 验证安装
-    print_info "验证 MariaDB 安装..."
-    print_info "请输入 MariaDB root 密码以验证安装:"
-    mysql -u root -p -e "SELECT VERSION();" && {
-        print_success "MariaDB 安装验证成功"
-    } || {
-        print_warning "无法验证 MariaDB 安装"
-    }
     
     print_success "MariaDB 安装和配置完成"
     return 0
 }
 
-# 安装MySQL - CentOS/RHEL/Rocky
+# 安装MySQL - RHEL/CentOS/Rocky
 install_mysql_rhel() {
-    print_info "在 $OS 上安装 MySQL..."
+    # 获取密码
+    get_database_passwords
     
-    # 根据主版本号选择正确的包
+    print_info "在 RHEL/CentOS/Rocky 上安装 MySQL..."
+    
+    # 检查是否是RHEL/CentOS 8+或Rocky Linux
     if [ "$MAJOR_VER" -ge 8 ]; then
-        print_info "检测到 EL8+ 系统，使用兼容的MySQL仓库..."
-        
-        # 移除可能存在的旧仓库
-        rm -f /etc/yum.repos.d/mysql*.repo
-        
-        # 对于Rocky Linux 9，尝试使用MariaDB作为替代
-        if [ "$ID" == "rocky" ] && [ "$MAJOR_VER" -ge 9 ]; then
-            print_info "在Rocky Linux 9上安装MySQL可能会遇到兼容性问题，尝试安装MariaDB作为替代..."
-            install_rocky9_mariadb
-            return $?
-        fi
+        print_info "检测到 RHEL/CentOS 8+ 或 Rocky Linux，使用dnf安装..."
         
         # 安装MySQL仓库
-        if [ "$ID" == "rocky" ] || [ "$ID" == "almalinux" ]; then
-            # Rocky/Alma Linux 使用 EL8 仓库
-            dnf install -y https://dev.mysql.com/get/mysql80-community-release-el8-4.noarch.rpm
-        else
-            # 其他 RHEL 8+ 系统
-            dnf install -y https://dev.mysql.com/get/mysql80-community-release-el8-4.noarch.rpm
+        if [ ! -f /etc/yum.repos.d/mysql-community.repo ]; then
+            print_info "添加MySQL仓库..."
+            dnf install -y https://dev.mysql.com/get/mysql80-community-release-el${MAJOR_VER}-1.noarch.rpm || {
+                print_error "无法添加MySQL仓库，尝试安装MariaDB作为替代..."
+                install_mariadb
+                return $?
+            }
+            
+            # 禁用默认的AppStream仓库中的MySQL模块
+            dnf module disable -y mysql
         fi
         
-        # 导入GPG密钥
-        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
-        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql
-        
-        # 禁用默认的MySQL模块
-        dnf module disable -y mysql
-        
-        # 安装MySQL服务器，忽略GPG检查
-        dnf install -y --nogpgcheck mysql-community-server || {
-            print_warning "MySQL安装失败，尝试安装MariaDB作为替代..."
+        # 安装MySQL服务器
+        print_info "安装MySQL服务器..."
+        dnf install -y mysql-community-server || {
+            print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
             install_mariadb
             return $?
         }
     else
-        # EL7 系统
-        yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-7.noarch.rpm
-        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
-        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql
-        yum install -y --nogpgcheck mysql-community-server || {
-            print_warning "MySQL安装失败，尝试安装MariaDB作为替代..."
+        # RHEL/CentOS 7
+        print_info "检测到 RHEL/CentOS 7，使用yum安装..."
+        
+        # 安装MySQL仓库
+        if [ ! -f /etc/yum.repos.d/mysql-community.repo ]; then
+            print_info "添加MySQL仓库..."
+            yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm || {
+                print_error "无法添加MySQL仓库，尝试安装MariaDB作为替代..."
+                install_mariadb
+                return $?
+            }
+        fi
+        
+        # 安装MySQL服务器
+        print_info "安装MySQL服务器..."
+        yum install -y mysql-community-server || {
+            print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
             install_mariadb
             return $?
         }
     fi
     
     # 启动MySQL服务
+    print_info "启动MySQL服务..."
     systemctl start mysqld || {
-        print_warning "无法启动mysqld服务，检查是否安装了MariaDB"
-        systemctl start mariadb || {
-            print_error "无法启动MySQL或MariaDB服务"
-            return 1
-        }
+        print_error "无法启动MySQL服务"
+        return 1
     }
     
     # 设置开机自启
-    systemctl enable mysqld || systemctl enable mariadb
+    print_info "设置MySQL开机自启..."
+    systemctl enable mysqld
     
     # 获取临时密码
-    if [ -f /var/log/mysqld.log ]; then
-        TEMP_PASS=$(grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}')
-        if [ -n "$TEMP_PASS" ]; then
-            print_info "MySQL 临时root密码: $TEMP_PASS"
-        else
-            print_warning "未找到临时密码，可能需要手动设置root密码"
-        fi
+    print_info "获取MySQL临时root密码..."
+    TEMP_PASS=$(grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}')
+    
+    if [ -n "$TEMP_PASS" ]; then
+        print_info "找到临时密码: $TEMP_PASS"
     else
         print_warning "MySQL日志文件不存在，无法获取临时密码"
     fi
@@ -434,6 +369,9 @@ install_mysql_rhel() {
 
 # 安装MySQL - 其他发行版
 install_mysql_other() {
+    # 获取密码
+    get_database_passwords
+    
     print_warning "未能识别的Linux发行版: $OS"
     print_info "尝试通用安装方法..."
     
@@ -452,6 +390,9 @@ install_mysql_other() {
 
 # 配置MySQL安全设置
 secure_mysql() {
+    # 获取密码
+    get_database_passwords
+    
     print_info "配置数据库安全设置..."
     
     # 检查MySQL/MariaDB是否已安装
@@ -505,6 +446,9 @@ EOF
 
 # 创建数据库和用户
 setup_database() {
+    # 获取密码
+    get_database_passwords
+    
     print_info "创建数据库和用户..."
     
     # 检查MySQL是否已安装
@@ -554,6 +498,12 @@ configure_remote_access() {
         echo "bind-address = 0.0.0.0" >> "$MYSQL_CONF"
     fi
     
+    # 确保添加了以下内容，允许远程访问
+    # 确保 MySQL 监听所有网络接口
+    if grep -q "mysqlx-bind-address" "$MYSQL_CONF"; then
+        sed -i 's/mysqlx-bind-address.*=.*/mysqlx-bind-address = 0.0.0.0/' "$MYSQL_CONF"
+    fi
+    
     # 重启MySQL服务
     if systemctl is-active --quiet mysql; then
         systemctl restart mysql
@@ -570,6 +520,9 @@ configure_remote_access() {
 
 # 导入初始数据
 import_initial_data() {
+    # 获取密码
+    get_database_passwords
+    
     print_info "检查是否存在初始数据文件..."
     
     # 检查MySQL是否已安装
@@ -595,6 +548,14 @@ import_initial_data() {
 
 # 显示连接信息
 show_connection_info() {
+    # 如果密码为空，尝试从配置文件获取
+    if [ -z "$DB_PASS" ] || [ -z "$MYSQL_ROOT_PASS" ]; then
+        print_info "尝试获取数据库配置信息..."
+        # 这里可以添加从配置文件读取密码的逻辑
+        # 如果无法获取，可以提示用户手动输入
+        get_database_passwords
+    fi
+    
     print_info "MySQL连接信息:"
     echo ""
     echo "==================================================="
@@ -939,23 +900,105 @@ monitor_database_performance() {
     return 0
 }
 
+# 添加自动更新函数
+# 检查并更新脚本
+check_for_updates() {
+    print_info "检查脚本更新..."
+    
+    # 确保 curl 已安装
+    if ! command -v curl &> /dev/null; then
+        print_info "安装 curl..."
+        if command -v apt &> /dev/null; then
+            apt update && apt install -y curl
+        elif command -v dnf &> /dev/null; then
+            dnf install -y curl
+        elif command -v yum &> /dev/null; then
+            yum install -y curl
+        else
+            print_error "无法安装 curl，跳过更新检查"
+            return 1
+        fi
+    fi
+    
+    # 获取脚本路径
+    SCRIPT_PATH=$(readlink -f "$0")
+    
+    # 从 GitHub 获取最新版本
+    print_info "从 GitHub 获取最新版本..."
+    
+    # 尝试从 GitHub 获取最新版本
+    LATEST_VERSION=$(curl -s "https://raw.githubusercontent.com/$GITHUB_REPO/main/deploymysql.sh" | grep -m 1 "SCRIPT_VERSION=" | cut -d'"' -f2)
+    
+    if [ -z "$LATEST_VERSION" ]; then
+        print_warning "无法获取最新版本信息，跳过更新"
+        return 1
+    fi
+    
+    print_info "当前版本: $SCRIPT_VERSION"
+    print_info "最新版本: $LATEST_VERSION"
+    
+    # 比较版本
+    if [ "$SCRIPT_VERSION" != "$LATEST_VERSION" ]; then
+        print_info "发现新版本，准备更新..."
+        
+        # 备份当前脚本
+        cp "$SCRIPT_PATH" "${SCRIPT_PATH}.bak"
+        print_info "已备份当前脚本到 ${SCRIPT_PATH}.bak"
+        
+        # 下载最新版本
+        if curl -s "https://raw.githubusercontent.com/$GITHUB_REPO/main/deploymysql.sh" -o "$SCRIPT_PATH"; then
+            print_success "脚本已更新到版本 $LATEST_VERSION"
+            print_info "请重新运行脚本以应用更新"
+            chmod +x "$SCRIPT_PATH"
+            exit 0
+        else
+            print_error "更新失败，恢复备份..."
+            mv "${SCRIPT_PATH}.bak" "$SCRIPT_PATH"
+            return 1
+        fi
+    else
+        print_success "脚本已是最新版本"
+        return 0
+    fi
+}
+
+# 手动更新脚本
+update_script() {
+    print_info "手动更新脚本..."
+    
+    # 确认更新
+    echo ""
+    echo "此操作将更新脚本到最新版本。"
+    echo "请输入 'YES' 确认更新:"
+    read confirm
+    
+    if [ "$confirm" != "YES" ]; then
+        print_info "更新已取消"
+        return 0
+    fi
+    
+    check_for_updates
+}
+
 # 修改显示菜单，添加卸载选项
 show_menu() {
     clear
-    echo "============================================"
-    echo "    咨询规划项目管理系统 - MySQL 管理工具    "
-    echo "============================================"
-    echo "1. 安装 MySQL"
-    echo "2. 升级 MySQL"
-    echo "3. 显示数据库连接信息"
-    echo "4. 检查 MySQL 状态"
-    echo "5. 显示实时数据库连接"
-    echo "6. 查看数据库错误日志"
-    echo "7. 监控数据库性能"
-    echo "8. 卸载 MySQL/MariaDB"
-    echo "9. 退出"
-    echo "============================================"
-    echo -n "请选择操作 [1-9]: "
+    echo "=================================================="
+    echo "  咨询规划项目管理系统 - MySQL 部署工具"
+    echo "=================================================="
+    echo "  1. 安装 MySQL/MariaDB"
+    echo "  2. 配置数据库安全设置"
+    echo "  3. 创建项目数据库和用户"
+    echo "  4. 配置远程访问"
+    echo "  5. 导入初始数据"
+    echo "  6. 显示连接信息"
+    echo "  7. 检查数据库状态"
+    echo "  8. 更新部署脚本"
+    echo "  9. 卸载数据库"
+    echo "  0. 退出"
+    echo "=================================================="
+    echo ""
+    echo -n "请选择操作 [0-9]: "
 }
 
 # 修改主函数，添加卸载选项
@@ -994,34 +1037,38 @@ main() {
                 read -p "按Enter键继续..."
                 ;;
             2)
-                upgrade_mysql
+                secure_mysql
                 read -p "按Enter键继续..."
                 ;;
             3)
-                show_connection_info
+                setup_database
                 read -p "按Enter键继续..."
                 ;;
             4)
-                check_mysql_status
+                configure_remote_access
                 read -p "按Enter键继续..."
                 ;;
             5)
-                show_active_connections
+                import_initial_data
                 read -p "按Enter键继续..."
                 ;;
             6)
-                show_error_log
+                show_connection_info
                 read -p "按Enter键继续..."
                 ;;
             7)
-                monitor_database_performance
+                check_mysql_status
                 read -p "按Enter键继续..."
                 ;;
             8)
-                uninstall_database
+                update_script
                 read -p "按Enter键继续..."
                 ;;
             9)
+                uninstall_database
+                read -p "按Enter键继续..."
+                ;;
+            0)
                 print_info "感谢使用，再见!"
                 exit 0
                 ;;
