@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.2"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -301,12 +301,19 @@ install_mysql_rhel() {
             dnf module disable -y mysql
         fi
         
+        # 导入MySQL GPG密钥
+        print_info "导入MySQL GPG密钥..."
+        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
+        
         # 安装MySQL服务器
         print_info "安装MySQL服务器..."
         dnf install -y mysql-community-server || {
-            print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
-            install_mariadb
-            return $?
+            print_warning "标准安装失败，尝试禁用GPG检查安装..."
+            dnf install -y --nogpgcheck mysql-community-server || {
+                print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
+                install_mariadb
+                return $?
+            }
         }
     else
         # RHEL/CentOS 7
@@ -322,12 +329,23 @@ install_mysql_rhel() {
             }
         fi
         
+        # 导入MySQL GPG密钥
+        print_info "导入MySQL GPG密钥..."
+        rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
+        
+        # 清理yum缓存
+        print_info "清理yum缓存..."
+        yum clean all
+        
         # 安装MySQL服务器
         print_info "安装MySQL服务器..."
         yum install -y mysql-community-server || {
-            print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
-            install_mariadb
-            return $?
+            print_warning "标准安装失败，尝试禁用GPG检查安装..."
+            yum install -y --nogpgcheck mysql-community-server || {
+                print_error "无法安装MySQL服务器，尝试安装MariaDB作为替代..."
+                install_mariadb
+                return $?
+            }
         }
     fi
     
@@ -900,7 +918,6 @@ monitor_database_performance() {
     return 0
 }
 
-# 添加自动更新函数
 # 检查并更新脚本
 check_for_updates() {
     print_info "检查脚本更新..."
@@ -923,6 +940,15 @@ check_for_updates() {
     # 获取脚本路径
     SCRIPT_PATH=$(readlink -f "$0")
     
+    # 从当前运行的脚本文件中读取实际版本号
+    CURRENT_VERSION=$(grep -m 1 "SCRIPT_VERSION=" "$SCRIPT_PATH" | cut -d'"' -f2)
+    
+    # 如果无法从文件中读取版本号，则使用变量中的版本号作为后备
+    if [ -z "$CURRENT_VERSION" ]; then
+        CURRENT_VERSION="$SCRIPT_VERSION"
+        print_warning "无法从脚本文件读取版本号，使用内存中的版本号: $CURRENT_VERSION"
+    fi
+    
     # 从 GitHub 获取最新版本
     print_info "从 GitHub 获取最新版本..."
     
@@ -934,11 +960,11 @@ check_for_updates() {
         return 1
     fi
     
-    print_info "当前版本: $SCRIPT_VERSION"
+    print_info "当前版本: $CURRENT_VERSION"
     print_info "最新版本: $LATEST_VERSION"
     
     # 比较版本
-    if [ "$SCRIPT_VERSION" != "$LATEST_VERSION" ]; then
+    if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
         print_info "发现新版本，准备更新..."
         
         # 备份当前脚本
