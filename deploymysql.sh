@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.4"
+SCRIPT_VERSION="1.0.5"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -622,7 +622,12 @@ check_mysql_status() {
     if systemctl is-active --quiet mysql || systemctl is-active --quiet mysqld || systemctl is-active --quiet mariadb; then
         print_success "MySQL 服务正在运行"
         
+        # 获取MySQL版本信息
+        MYSQL_VERSION=$(mysql --version 2>/dev/null | awk '{print $3}')
+        print_info "MySQL 版本: $MYSQL_VERSION"
+        
         # 尝试不同的连接方式
+        print_info "尝试使用保存的密码连接..."
         if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT VERSION();" >/dev/null 2>&1; then
             print_success "可以使用root用户连接到MySQL"
             
@@ -635,6 +640,39 @@ check_mysql_status() {
         else
             print_warning "无法使用root用户连接到MySQL，尝试交互式方式..."
             
+            # 尝试使用不同的认证插件
+            print_info "尝试使用mysql_native_password认证插件连接..."
+            if mysql -u root -p"$MYSQL_ROOT_PASS" --default-auth=mysql_native_password -e "SELECT VERSION();" >/dev/null 2>&1; then
+                print_success "使用mysql_native_password认证插件可以连接到MySQL"
+                return 0
+            fi
+            
+            # 尝试使用localhost主机名
+            print_info "尝试使用localhost主机名连接..."
+            if mysql -u root -p"$MYSQL_ROOT_PASS" -h localhost -e "SELECT VERSION();" >/dev/null 2>&1; then
+                print_success "使用localhost主机名可以连接到MySQL"
+                return 0
+            fi
+            
+            # 尝试使用127.0.0.1 IP地址
+            print_info "尝试使用127.0.0.1 IP地址连接..."
+            if mysql -u root -p"$MYSQL_ROOT_PASS" -h 127.0.0.1 -e "SELECT VERSION();" >/dev/null 2>&1; then
+                print_success "使用127.0.0.1 IP地址可以连接到MySQL"
+                return 0
+            fi
+            
+            # 尝试使用socket连接
+            print_info "尝试使用socket连接..."
+            for socket_path in "/var/run/mysqld/mysqld.sock" "/var/lib/mysql/mysql.sock" "/tmp/mysql.sock"; do
+                if [ -S "$socket_path" ]; then
+                    print_info "找到socket: $socket_path"
+                    if mysql -u root -p"$MYSQL_ROOT_PASS" --socket="$socket_path" -e "SELECT VERSION();" >/dev/null 2>&1; then
+                        print_success "使用socket $socket_path 可以连接到MySQL"
+                        return 0
+                    fi
+                fi
+            done
+            
             # 提示用户输入密码
             print_info "请手动输入MySQL root密码进行验证:"
             if mysql -u root -p -e "SELECT VERSION();" >/dev/null 2>&1; then
@@ -646,18 +684,18 @@ check_mysql_status() {
                 echo
             else
                 print_error "即使使用交互式方式也无法连接到MySQL"
-                print_info "可能的原因:"
-                print_info "1. root用户密码确实不正确"
-                print_info "2. root用户可能只允许从localhost通过socket连接"
-                print_info "3. MySQL可能配置了不同的认证方式"
                 
-                # 尝试使用socket连接
-                print_info "尝试使用socket连接..."
-                if mysql -u root -p"$MYSQL_ROOT_PASS" --socket=/var/run/mysqld/mysqld.sock -e "SELECT VERSION();" >/dev/null 2>&1; then
-                    print_success "使用socket可以连接到MySQL"
-                else
-                    print_warning "使用socket也无法连接"
-                fi
+                # 检查MySQL用户和权限
+                print_info "尝试检查MySQL用户和权限..."
+                print_info "请尝试以下步骤手动连接到MySQL:"
+                print_info "1. 使用 'sudo mysql' 命令尝试连接"
+                print_info "2. 如果成功，运行以下命令查看用户和权限:"
+                print_info "   SELECT user, host, plugin FROM mysql.user WHERE user='root';"
+                print_info "3. 如果root用户使用auth_socket或unix_socket认证，运行以下命令修改认证方式:"
+                print_info "   ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '你的密码';"
+                print_info "   FLUSH PRIVILEGES;"
+                
+                return 1
             fi
         fi
     else
