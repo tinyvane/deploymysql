@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.6"
+SCRIPT_VERSION="1.0.7"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -467,7 +467,7 @@ secure_mysql() {
                     print_warning "无法设置root密码，尝试重置密码方法"
                     reset_mysql_password
                 }
-            }
+            fi
         fi
     fi
     
