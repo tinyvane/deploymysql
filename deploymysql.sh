@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 咨询规划项目管理系统 - MySQL 一键部署脚本
+# MySQL/MariaDB 一键部署与管理脚本
 # 作者：Claude
 # 日期：2024-02-26
 
@@ -16,7 +16,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 数据库配置
-DB_NAME="consulting_project_management"
+DB_NAME="myapp_database"
 DB_USER="app_user"
 # 密码变量初始化为空，将在需要时提示用户输入
 DB_PASS=""
@@ -984,7 +984,7 @@ update_script() {
 show_menu() {
     clear
     echo "=================================================="
-    echo "  咨询规划项目管理系统 - MySQL 部署工具"
+    echo "  MySQL/MariaDB 部署与管理工具 v${SCRIPT_VERSION}"
     echo "=================================================="
     echo "  1. 安装 MySQL/MariaDB"
     echo "  2. 配置数据库安全设置"
