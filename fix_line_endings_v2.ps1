@@ -1,10 +1,13 @@
 $content = Get-Content -Path "deploymysql.sh" -Raw
 $content = $content -replace "`r`n", "`n"
 
-# Ensure there's a newline between closing braces and function declarations for all functions
+# Fix the first issue - ensure proper spacing between function definitions
 $content = $content -replace "}\n# ", "}\n\n# "
 
-# Ensure main function call has a newline after the last function
-$content = $content -replace "}\n# 执行主函数\nmain", "}\n\n# 执行主函数\nmain"
+# Fix the second issue - ensure main function has proper closing brace with spacing
+$content = $content -replace "}\n\n# 执行主函数", "}\n\n# 执行主函数"
+
+# Ensure the main function call is on a new line after the comment
+$content = $content -replace "# 执行主函数\nmain", "# 执行主函数\n\nmain"
 
 Set-Content -Path "deploymysql.sh" -Value $content -NoNewline 

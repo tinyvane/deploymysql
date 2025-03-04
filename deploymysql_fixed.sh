@@ -407,7 +407,9 @@ install_mysql_other() {
 secure_mysql() {
     # 获取密码
     get_database_passwords
+    
     print_info "配置数据库安全设置..."
+    
     # 检查MySQL/MariaDB是否已安装
     if ! command -v mysql >/dev/null 2>&1; then
         print_error "数据库未安装或不在PATH中，无法配置安全设置"
@@ -481,7 +483,6 @@ EOF
     
     print_success "数据库安全设置完成"
     return 0
-    }
 }
 
 # 添加重置MySQL密码的函数
