@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.0.3"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -566,6 +566,20 @@ import_initial_data() {
 
 # 显示连接信息
 show_connection_info() {
+    print_info "检查数据库安装状态..."
+    
+    # 检查MySQL/MariaDB是否已安装
+    if ! command -v mysql >/dev/null 2>&1; then
+        print_error "数据库未安装或不在PATH中，请先安装数据库"
+        return 1
+    fi
+    
+    # 检查数据库服务是否运行
+    if ! systemctl is-active --quiet mysql && ! systemctl is-active --quiet mysqld && ! systemctl is-active --quiet mariadb; then
+        print_error "数据库服务未运行，请先启动数据库服务"
+        return 1
+    fi
+    
     # 如果密码为空，尝试从配置文件获取
     if [ -z "$DB_PASS" ] || [ -z "$MYSQL_ROOT_PASS" ]; then
         print_info "尝试获取数据库配置信息..."
@@ -574,12 +588,18 @@ show_connection_info() {
         get_database_passwords
     fi
     
+    # 尝试获取本地IP地址
+    LOCAL_IP=$(hostname -I | awk '{print $1}')
+    if [ -z "$LOCAL_IP" ]; then
+        LOCAL_IP="127.0.0.1"
+    fi
+    
     print_info "MySQL连接信息:"
     echo ""
     echo "==================================================="
     echo "  数据库连接信息:"
     echo "---------------------------------------------------"
-    echo "  主机: $(hostname -I | awk '{print $1}')"
+    echo "  主机: $LOCAL_IP"
     echo "  端口: 3306"
     echo "  数据库名: $DB_NAME"
     echo "  用户名: $DB_USER"
