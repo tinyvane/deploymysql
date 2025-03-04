@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="1.0.4"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -614,28 +614,54 @@ show_connection_info() {
 check_mysql_status() {
     print_info "检查MySQL状态..."
     
-    if command -v mysql >/dev/null 2>&1; then
-        if systemctl is-active --quiet mysql || systemctl is-active --quiet mysqld; then
-            print_success "MySQL 服务正在运行"
+    if ! command -v mysql >/dev/null 2>&1; then
+        print_error "MySQL 未安装"
+        return 1
+    fi
+    
+    if systemctl is-active --quiet mysql || systemctl is-active --quiet mysqld || systemctl is-active --quiet mariadb; then
+        print_success "MySQL 服务正在运行"
+        
+        # 尝试不同的连接方式
+        if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT VERSION();" >/dev/null 2>&1; then
+            print_success "可以使用root用户连接到MySQL"
             
-            # 尝试连接数据库
-            if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT VERSION();" >/dev/null 2>&1; then
-                print_success "可以使用root用户连接到MySQL"
-                
-                # 检查项目数据库
-                if mysql -u root -p"$MYSQL_ROOT_PASS" -e "USE $DB_NAME;" >/dev/null 2>&1; then
-                    print_success "项目数据库 '$DB_NAME' 存在"
-                else
-                    print_warning "项目数据库 '$DB_NAME' 不存在"
-                fi
+            # 检查项目数据库
+            if mysql -u root -p"$MYSQL_ROOT_PASS" -e "USE $DB_NAME;" >/dev/null 2>&1; then
+                print_success "项目数据库 '$DB_NAME' 存在"
             else
-                print_warning "无法使用root用户连接到MySQL，密码可能不正确"
+                print_warning "项目数据库 '$DB_NAME' 不存在"
             fi
         else
-            print_error "MySQL 服务未运行"
+            print_warning "无法使用root用户连接到MySQL，尝试交互式方式..."
+            
+            # 提示用户输入密码
+            print_info "请手动输入MySQL root密码进行验证:"
+            if mysql -u root -p -e "SELECT VERSION();" >/dev/null 2>&1; then
+                print_success "使用交互式方式可以连接到MySQL"
+                print_info "请更新脚本中保存的密码"
+                
+                # 更新保存的密码
+                read -sp "请输入正确的MySQL root密码以更新脚本: " MYSQL_ROOT_PASS
+                echo
+            else
+                print_error "即使使用交互式方式也无法连接到MySQL"
+                print_info "可能的原因:"
+                print_info "1. root用户密码确实不正确"
+                print_info "2. root用户可能只允许从localhost通过socket连接"
+                print_info "3. MySQL可能配置了不同的认证方式"
+                
+                # 尝试使用socket连接
+                print_info "尝试使用socket连接..."
+                if mysql -u root -p"$MYSQL_ROOT_PASS" --socket=/var/run/mysqld/mysqld.sock -e "SELECT VERSION();" >/dev/null 2>&1; then
+                    print_success "使用socket可以连接到MySQL"
+                else
+                    print_warning "使用socket也无法连接"
+                fi
+            fi
         fi
     else
-        print_error "MySQL 未安装"
+        print_error "MySQL 服务未运行"
     fi
 }
 
