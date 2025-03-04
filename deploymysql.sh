@@ -5,7 +5,7 @@
 # 日期：2024-02-26
 
 # 脚本版本
-SCRIPT_VERSION="1.0.5"
+SCRIPT_VERSION="1.0.6"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
@@ -422,35 +422,61 @@ secure_mysql() {
     # 检查是否是Debian/Ubuntu
     if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "设置root密码..."
-        mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';" 2>/dev/null || {
-            print_warning "无法设置root密码，尝试MariaDB方式"
-            mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
-                print_warning "无法设置root密码，可能需要手动设置"
-                return 1
+        
+        # 尝试使用sudo直接访问MySQL
+        if sudo mysql -e "SELECT 1;" >/dev/null 2>&1; then
+            print_info "使用sudo访问MySQL成功，设置root密码..."
+            sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" && {
+                print_success "root密码设置成功"
+            } || {
+                print_warning "无法设置root密码，尝试其他方法"
             }
-        }
+        else
+            # 尝试标准方式设置密码
+            mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';" 2>/dev/null || {
+                print_warning "无法设置root密码，尝试MariaDB方式"
+                mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
+                    print_warning "无法设置root密码，尝试重置密码方法"
+                    reset_mysql_password
+                }
+            }
+        fi
     else
         # 对于CentOS/RHEL/Rocky，使用临时密码登录并修改
         if [ -n "$TEMP_PASS" ]; then
-            mysql --connect-expired-password -u root -p"$TEMP_PASS" -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null || {
-                print_warning "使用临时密码设置root密码失败，尝试MariaDB方式"
-                mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
-                    print_warning "无法设置root密码，可能需要手动设置"
-                    return 1
-                }
+            print_info "使用临时密码设置root密码..."
+            mysql --connect-expired-password -u root -p"$TEMP_PASS" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null && {
+                print_success "root密码设置成功"
+            } || {
+                print_warning "使用临时密码设置root密码失败，尝试其他方法"
+                reset_mysql_password
             }
         else
-            print_warning "无法获取临时密码，尝试MariaDB方式设置root密码"
-            mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
-                print_warning "无法设置root密码，可能需要手动设置"
-                return 1
+            # 尝试使用sudo直接访问MySQL
+            if sudo mysql -e "SELECT 1;" >/dev/null 2>&1; then
+                print_info "使用sudo访问MySQL成功，设置root密码..."
+                sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" && {
+                    print_success "root密码设置成功"
+                } || {
+                    print_warning "无法设置root密码，尝试重置密码方法"
+                    reset_mysql_password
+                }
+            else
+                print_warning "无法获取临时密码，尝试MariaDB方式设置root密码"
+                mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
+                    print_warning "无法设置root密码，尝试重置密码方法"
+                    reset_mysql_password
+                }
             }
         fi
     fi
     
     # 使用新密码执行安全设置
     print_info "执行安全设置..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF 2>/dev/null || return 1
+    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF 2>/dev/null || {
+        print_warning "无法使用设置的密码连接MySQL，跳过安全设置"
+        return 1
+    }
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
@@ -460,6 +486,88 @@ EOF
     
     print_success "数据库安全设置完成"
     return 0
+}
+
+# 添加重置MySQL密码的函数
+reset_mysql_password() {
+    print_info "尝试重置MySQL root密码..."
+    
+    # 确认重置
+    echo ""
+    echo "需要重置MySQL root密码。"
+    echo "请输入 'YES' 确认重置:"
+    read confirm
+    
+    if [ "$confirm" != "YES" ]; then
+        print_info "密码重置已取消"
+        return 1
+    fi
+    
+    # 停止MySQL服务
+    print_info "停止MySQL服务..."
+    systemctl stop mysql 2>/dev/null
+    systemctl stop mysqld 2>/dev/null
+    systemctl stop mariadb 2>/dev/null
+    
+    # 以跳过授权表的方式启动MySQL
+    print_info "以安全模式启动MySQL..."
+    
+    # 创建临时目录存放pid文件
+    mkdir -p /var/run/mysqld
+    chown mysql:mysql /var/run/mysqld
+    
+    # 启动MySQL安全模式
+    print_info "启动MySQL安全模式，这可能需要一些时间..."
+    mysqld_safe --skip-grant-tables --skip-networking &
+    
+    # 等待MySQL启动
+    print_info "等待MySQL启动..."
+    sleep 10
+    
+    # 重置root密码
+    print_info "重置root密码..."
+    mysql -u root <<EOF
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';
+FLUSH PRIVILEGES;
+EOF
+    
+    if [ $? -eq 0 ]; then
+        print_success "root密码重置成功"
+    else
+        print_error "root密码重置失败"
+        
+        # 尝试另一种语法（适用于较旧版本的MySQL）
+        mysql -u root <<EOF
+FLUSH PRIVILEGES;
+UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root' AND Host='localhost';
+FLUSH PRIVILEGES;
+EOF
+        
+        if [ $? -eq 0 ]; then
+            print_success "root密码重置成功（使用旧语法）"
+        else
+            print_error "root密码重置失败，请手动重置密码"
+        fi
+    fi
+    
+    # 停止MySQL安全模式
+    print_info "停止MySQL安全模式..."
+    pkill mysqld
+    
+    # 重启MySQL服务
+    print_info "重启MySQL服务..."
+    systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null
+    
+    # 验证密码
+    print_info "验证新密码..."
+    if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 'Password reset successful';" >/dev/null 2>&1; then
+        print_success "密码验证成功，MySQL root密码已重置"
+        return 0
+    else
+        print_error "密码验证失败，请手动检查MySQL状态"
+        return 1
+    fi
 }
 
 # 创建数据库和用户
