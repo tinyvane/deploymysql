@@ -401,9 +401,7 @@ install_mysql_other() {
         print_error "无法安装MySQL。请手动安装后再运行此脚本的配置部分。"
         exit 1
     fi
-}
-
-# 配置MySQL安全设置
+}\n\n# 配置MySQL安全设置
 secure_mysql() {
     # 获取密码
     get_database_passwords
@@ -1238,7 +1236,5 @@ main() {
                 ;;
         esac
     done
-}
-
-# 执行主函数
+}\n\n# 执行主函数
 main
