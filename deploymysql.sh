@@ -3,7 +3,7 @@
 # 作者：Claude
 # 日期：2024-02-26
 # 脚本版本
-SCRIPT_VERSION="1.0.8"
+SCRIPT_VERSION="1.0.9"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 颜色定义
