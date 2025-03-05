@@ -35,28 +35,36 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[错误]${NC} $1"
-}\n\n# 获取数据库密码
+}
+
+# 获取数据库密码
 get_database_passwords() {
     # 只有当密码为空时才询问
-    if [  -z "$DB_PASS"  ]; then
+    if [ -z "$DB_PASS" ]; then
         read -sp "请输入应用数据库用户密码: " DB_PASS
         echo
     fi
     
-    if [  -z "$MYSQL_ROOT_PASS"  ]; then
+    if [ -z "$MYSQL_ROOT_PASS" ]; then
         read -sp "请输入MySQL root密码: " MYSQL_ROOT_PASS
         echo
-    fi\n}\n\n# 检查是否以root用户运行
+    fi
+}
+
+# 检查是否以root用户运行
 check_root() {
-    if [  "$(id -u)" != "0"  ]; then
+    if [ "$(id -u)" != "0" ]; then
         print_error "此脚本需要以root权限运行"
         print_info "请使用 'sudo bash deploymysql.sh' 重新运行"
         exit 1
-    fi\n}\n\n# 检测Linux发行版
+    fi
+}
+
+# 检测Linux发行版
 detect_distro() {
     print_info "检测Linux发行版..."
     
-    if [  -f /etc/os-release  ]; then
+    if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
@@ -65,7 +73,7 @@ detect_distro() {
         OS=$(lsb_release -si)
         VER=$(lsb_release -sr)
         ID=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-    elif [  -f /etc/lsb-release  ]; then
+    elif [ -f /etc/lsb-release ]; then
         . /etc/lsb-release
         OS=$DISTRIB_ID
         VER=$DISTRIB_RELEASE
@@ -80,7 +88,9 @@ detect_distro() {
     MAJOR_VER=$(echo "$VER" | cut -d. -f1)
     
     print_success "检测到系统: $OS $VER (ID: $ID, 主版本: $MAJOR_VER)"
-}\n\n# 安装MySQL - Debian/Ubuntu
+}
+
+# 安装MySQL - Debian/Ubuntu
 install_mysql_debian() {
     # 获取密码
     get_database_passwords
@@ -100,7 +110,9 @@ install_mysql_debian() {
     systemctl enable mysql
     
     print_success "MySQL 安装完成"
-}\n\n# 安装MariaDB - 作为替代方案
+}
+
+# 安装MariaDB - 作为替代方案
 install_mariadb() {
     # 获取密码
     get_database_passwords
@@ -143,7 +155,9 @@ install_mariadb() {
     systemctl start mariadb || {
         print_error "无法启动 MariaDB 服务"
         return 1
-    }\n\n# 设置开机自启
+    }
+    
+    # 设置开机自启
     print_info "设置 MariaDB 开机自启..."
     systemctl enable mariadb
     
@@ -179,7 +193,7 @@ GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'%';
 FLUSH PRIVILEGES;
 EOF
     
-    if [  $? -eq 0  ]; then
+    if [ $? -eq 0 ]; then
         print_success "数据库和用户创建完成"
     else
         print_error "数据库和用户创建失败"
@@ -207,13 +221,13 @@ EOF
     # 查找 MariaDB 配置文件
     local MARIADB_CONF=""
     for conf_path in "/etc/my.cnf.d/mariadb-server.cnf" "/etc/my.cnf.d/server.cnf" "/etc/my.cnf"; do
-        if [  -f "$conf_path"  ]; then
+        if [ -f "$conf_path" ]; then
             MARIADB_CONF="$conf_path"
             break
         fi
     done
     
-    if [  -z "$MARIADB_CONF"  ]; then
+    if [ -z "$MARIADB_CONF" ]; then
         print_warning "找不到 MariaDB 配置文件，但已创建自定义配置文件"
     else
         print_info "使用配置文件: $MARIADB_CONF"
@@ -240,7 +254,9 @@ EOF
     systemctl restart mariadb || {
         print_error "无法重启 MariaDB 服务"
         return 1
-    }\n\n# 开放防火墙端口
+    }
+    
+    # 开放防火墙端口
     if command -v firewall-cmd >/dev/null 2>&1; then
         print_info "配置防火墙..."
         firewall-cmd --permanent --add-service=mysql
@@ -256,7 +272,9 @@ EOF
     
     print_success "MariaDB 安装和配置完成"
     return 0
-}\n\n# 安装MySQL - RHEL/CentOS/Rocky
+}
+
+# 安装MySQL - RHEL/CentOS/Rocky
 install_mysql_rhel() {
     # 获取密码
     get_database_passwords
@@ -264,17 +282,19 @@ install_mysql_rhel() {
     print_info "在 RHEL/CentOS/Rocky 上安装 MySQL..."
     
     # 检查是否是RHEL/CentOS 8+或Rocky Linux
-    if [  "$MAJOR_VER" -ge 8  ]; then
+    if [ "$MAJOR_VER" -ge 8 ]; then
         print_info "检测到 RHEL/CentOS 8+ 或 Rocky Linux，使用dnf安装..."
         
         # 安装MySQL仓库
-        if [  ! -f /etc/yum.repos.d/mysql-community.repo  ]; then
+        if [ ! -f /etc/yum.repos.d/mysql-community.repo ]; then
             print_info "添加MySQL仓库..."
             dnf install -y "https://dev.mysql.com/get/mysql80-community-release-el${MAJOR_VER}-1.noarch.rpm" || {
                 print_error "无法添加MySQL仓库，尝试安装MariaDB作为替代..."
                 install_mariadb
                 return $?
-            }\n\n# 禁用默认的AppStream仓库中的MySQL模块
+            }
+            
+            # 禁用默认的AppStream仓库中的MySQL模块
             dnf module disable -y mysql
         fi
         
@@ -297,7 +317,7 @@ install_mysql_rhel() {
         print_info "检测到 RHEL/CentOS 7，使用yum安装..."
         
         # 安装MySQL仓库
-        if [  ! -f /etc/yum.repos.d/mysql-community.repo  ]; then
+        if [ ! -f /etc/yum.repos.d/mysql-community.repo ]; then
             print_info "添加MySQL仓库..."
             yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-3.noarch.rpm || {
                 print_error "无法添加MySQL仓库，尝试安装MariaDB作为替代..."
@@ -331,7 +351,9 @@ install_mysql_rhel() {
     systemctl start mysqld || {
         print_error "无法启动MySQL服务"
         return 1
-    }\n\n# 设置开机自启
+    }
+    
+    # 设置开机自启
     print_info "设置MySQL开机自启..."
     systemctl enable mysqld
     
@@ -339,7 +361,7 @@ install_mysql_rhel() {
     print_info "获取MySQL临时root密码..."
     TEMP_PASS=$(grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}')
     
-    if [  -n "$TEMP_PASS"  ]; then
+    if [ -n "$TEMP_PASS" ]; then
         print_info "找到临时密码: $TEMP_PASS"
     else
         print_warning "MySQL日志文件不存在，无法获取临时密码"
@@ -357,7 +379,10 @@ install_mysql_rhel() {
     else
         print_error "数据库客户端命令不可用，安装可能失败"
         return 1
-    fi\n}\n\n# 安装MySQL - 其他发行版
+    fi
+}
+
+# 安装MySQL - 其他发行版
 install_mysql_other() {
     # 获取密码
     get_database_passwords
@@ -375,7 +400,10 @@ install_mysql_other() {
     else
         print_error "无法安装MySQL。请手动安装后再运行此脚本的配置部分。"
         exit 1
-    fi\n}\n\n# 配置MySQL安全设置
+    fi
+}
+
+# 配置MySQL安全设置
 secure_mysql() {
     # 获取密码
     get_database_passwords
@@ -387,7 +415,7 @@ secure_mysql() {
     fi
     
     # 检查是否是Debian/Ubuntu
-    if [ [ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ] ]; then
+    if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "设置root密码..."
         
         # 尝试使用sudo直接访问MySQL
@@ -410,7 +438,7 @@ secure_mysql() {
         fi
     else
         # 对于CentOS/RHEL/Rocky，使用临时密码登录并修改
-        if [  -n "$TEMP_PASS"  ]; then
+        if [ -n "$TEMP_PASS" ]; then
             print_info "使用临时密码设置root密码..."
             if mysql --connect-expired-password -u root -p"$TEMP_PASS" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null; then
                 print_success "root密码设置成功"
@@ -440,20 +468,24 @@ secure_mysql() {
     
     # 使用新密码执行安全设置
     print_info "执行安全设置..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF 2>/dev/null || {
-        print_warning "无法使用设置的密码连接MySQL，跳过安全设置"
-        return 1
-    }
+    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF 2>/dev/null
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
+
+if [ $? -ne 0 ]; then
+    print_warning "无法使用设置的密码连接MySQL，跳过安全设置"
+    return 1
+fi
     
     print_success "数据库安全设置完成"
     return 0
-}\n\n# 添加重置MySQL密码的函数
+}
+
+# 添加重置MySQL密码的函数
 reset_mysql_password() {
     print_info "尝试重置MySQL root密码..."
     
@@ -463,7 +495,7 @@ reset_mysql_password() {
     echo "请输入 'YES' 确认重置:"
     read confirm
     
-    if [  "$confirm" != "YES"  ]; then
+    if [ "$confirm" != "YES" ]; then
         print_info "密码重置已取消"
         return 1
     fi
@@ -489,13 +521,13 @@ reset_mysql_password() {
         # 尝试创建一个临时配置文件来跳过授权表
         MYSQL_CONF_DIR=""
         for dir in "/etc/mysql/conf.d" "/etc/my.cnf.d" "/etc/mysql"; do
-            if [  -d "$dir"  ]; then
+            if [ -d "$dir" ]; then
                 MYSQL_CONF_DIR="$dir"
                 break
             fi
         done
         
-        if [  -n "$MYSQL_CONF_DIR"  ]; then
+        if [ -n "$MYSQL_CONF_DIR" ]; then
             echo "[mysqld]
 skip-grant-tables
 skip-networking" > "$MYSQL_CONF_DIR/mysql-reset.cnf"
@@ -518,7 +550,7 @@ FLUSH PRIVILEGES;
 EOF
             
             RESET_RESULT=$?
-            if [  $RESET_RESULT -eq 0  ]; then
+            if [ $RESET_RESULT -eq 0 ]; then
                 print_success "root密码重置成功"
             else
                 print_warning "使用新语法重置密码失败，尝试旧语法..."
@@ -531,7 +563,7 @@ FLUSH PRIVILEGES;
 EOF
                 
                 RESET_RESULT=$?
-                if [  $RESET_RESULT -eq 0  ]; then
+                if [ $RESET_RESULT -eq 0 ]; then
                     print_success "root密码重置成功（使用旧语法）"
                 else
                     print_error "无法重置root密码，尝试MariaDB特定语法..."
@@ -543,7 +575,7 @@ UPDATE mysql.user SET Password=PASSWORD('$MYSQL_ROOT_PASS') WHERE User='root';
 FLUSH PRIVILEGES;
 EOF
                     
-                    if [  $? -eq 0  ]; then
+                    if [ $? -eq 0 ]; then
                         print_success "root密码重置成功（使用MariaDB语法）"
                     else
                         print_error "无法重置root密码，请手动重置"
@@ -592,7 +624,7 @@ FLUSH PRIVILEGES;
 EOF
         
         RESET_RESULT=$?
-        if [  $RESET_RESULT -eq 0  ]; then
+        if [ $RESET_RESULT -eq 0 ]; then
             print_success "root密码重置成功"
         else
             print_warning "使用新语法重置密码失败，尝试旧语法..."
@@ -605,7 +637,7 @@ FLUSH PRIVILEGES;
 EOF
             
             RESET_RESULT=$?
-            if [  $RESET_RESULT -eq 0  ]; then
+            if [ $RESET_RESULT -eq 0 ]; then
                 print_success "root密码重置成功（使用旧语法）"
             else
                 print_error "无法重置root密码，请手动重置密码"
@@ -634,7 +666,10 @@ EOF
         print_info "您可能需要使用以下命令手动完成密码重置:"
         print_info "sudo mysql_secure_installation"
         return 1
-    fi\n}\n\n# 创建数据库和用户
+    fi
+}
+
+# 创建数据库和用户
 setup_database() {
     # 获取密码
     get_database_passwords
@@ -656,20 +691,22 @@ EOF
     
     print_success "数据库 '$DB_NAME' 和用户 '$DB_USER' 创建完成"
     return 0
-}\n\n# 配置MySQL远程访问
+}
+
+# 配置MySQL远程访问
 configure_remote_access() {
     print_info "配置MySQL远程访问..."
     
     # 找到MySQL配置文件
     MYSQL_CONF=""
     for conf_path in "/etc/mysql/mysql.conf.d/mysqld.cnf" "/etc/my.cnf" "/etc/mysql/my.cnf"; do
-        if [  -f "$conf_path"  ]; then
+        if [ -f "$conf_path" ]; then
             MYSQL_CONF="$conf_path"
             break
         fi
     done
     
-    if [  -z "$MYSQL_CONF"  ]; then
+    if [ -z "$MYSQL_CONF" ]; then
         print_error "找不到MySQL配置文件"
         return 1
     fi
@@ -704,7 +741,9 @@ configure_remote_access() {
     
     print_success "MySQL远程访问配置完成"
     return 0
-}\n\n# 导入初始数据
+}
+
+# 导入初始数据
 import_initial_data() {
     # 获取密码
     get_database_passwords
@@ -717,7 +756,7 @@ import_initial_data() {
         return 1
     fi
     
-    if [  -f "backend/init.sql"  ]; then
+    if [ -f "backend/init.sql" ]; then
         print_info "导入初始数据..."
         if mysql -u root -p"$MYSQL_ROOT_PASS" "$DB_NAME" < backend/init.sql 2>/dev/null; then
             print_success "初始数据导入完成"
@@ -729,7 +768,10 @@ import_initial_data() {
     else
         print_warning "未找到初始数据文件 (backend/init.sql)"
         return 1
-    fi\n}\n\n# 显示连接信息
+    fi
+}
+
+# 显示连接信息
 show_connection_info() {
     print_info "检查数据库安装状态..."
     
@@ -746,7 +788,7 @@ show_connection_info() {
     fi
     
     # 如果密码为空，尝试从配置文件获取
-    if [  -z "$DB_PASS" ] || [ -z "$MYSQL_ROOT_PASS"  ]; then
+    if [ -z "$DB_PASS" ] || [ -z "$MYSQL_ROOT_PASS" ]; then
         print_info "尝试获取数据库配置信息..."
         # 这里可以添加从配置文件读取密码的逻辑
         # 如果无法获取，可以提示用户手动输入
@@ -755,7 +797,7 @@ show_connection_info() {
     
     # 尝试获取本地IP地址
     LOCAL_IP=$(hostname -I | awk '{print $1}')
-    if [  -z "$LOCAL_IP"  ]; then
+    if [ -z "$LOCAL_IP" ]; then
         LOCAL_IP="127.0.0.1"
     fi
     
@@ -772,7 +814,9 @@ show_connection_info() {
     echo "==================================================="
     echo ""
     print_info "请确保在防火墙/安全组中开放3306端口"
-}\n\n# 检查MySQL状态
+}
+
+# 检查MySQL状态
 check_mysql_status() {
     print_info "检查MySQL状态..."
     
@@ -819,7 +863,7 @@ check_mysql_status() {
             # 尝试使用socket连接
             print_info "尝试使用socket连接..."
             for socket_path in "/var/run/mysqld/mysqld.sock" "/var/lib/mysql/mysql.sock" "/tmp/mysql.sock"; do
-                if [  -S "$socket_path"  ]; then
+                if [ -S "$socket_path" ]; then
                     print_info "找到socket: $socket_path"
                     if mysql -u root -p"$MYSQL_ROOT_PASS" --socket="$socket_path" -e "SELECT VERSION();" >/dev/null 2>&1; then
                         print_success "使用socket $socket_path 可以连接到MySQL"
@@ -851,7 +895,10 @@ check_mysql_status() {
         fi
     else
         print_error "MySQL 服务未运行"
-    fi\n}\n\n# 添加卸载MySQL/MariaDB的函数
+    fi
+}
+
+# 添加卸载MySQL/MariaDB的函数
 uninstall_database() {
     print_info "卸载数据库服务..."
     # 确认卸载
@@ -860,7 +907,7 @@ uninstall_database() {
     echo "请输入 'YES' 确认卸载:"
     read confirm
     
-    if [  "$confirm" != "YES"  ]; then
+    if [ "$confirm" != "YES" ]; then
         print_info "卸载已取消"
         return 0
     fi
@@ -872,14 +919,14 @@ uninstall_database() {
     systemctl stop mariadb 2>/dev/null
     
     # 根据不同发行版卸载
-    if [ [ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ] ]; then
+    if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "在Debian/Ubuntu上卸载数据库..."
         apt purge -y mysql-server mysql-client mysql-common mariadb-server
         apt autoremove -y
         apt autoclean
-    elif [ [ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ] ]; then
+    elif [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
         print_info "在RHEL/CentOS/Rocky上卸载数据库..."
-        if [  "$MAJOR_VER" -ge 8  ]; then
+        if [ "$MAJOR_VER" -ge 8 ]; then
             dnf remove -y mysql-server mysql mysql-community-* mariadb mariadb-server
             dnf module reset -y mysql
         else
@@ -910,7 +957,9 @@ uninstall_database() {
     
     print_success "数据库卸载完成"
     return 0
-}\n\n# 修改备份函数，使用交互方式输入密码
+}
+
+# 修改备份函数，使用交互方式输入密码
 backup_database() {
     print_info "备份所有数据库..."
     BACKUP_FILE="/tmp/mysql_backup_$(date +%Y%m%d_%H%M%S).sql"
@@ -922,7 +971,10 @@ backup_database() {
     else
         print_error "数据库备份失败"
         return 1
-    fi\n}\n\n# 修改升级MySQL函数，使用交互方式输入密码
+    fi
+}
+
+# 修改升级MySQL函数，使用交互方式输入密码
 upgrade_mysql() {
     print_info "开始升级MySQL..."
     # 检查MySQL是否已安装
@@ -939,14 +991,16 @@ upgrade_mysql() {
     backup_database || {
         print_error "数据库备份失败，中止升级"
         return 1
-    }\n\n# 根据不同发行版执行升级
-    if [ [ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ] ]; then
+    }
+    
+    # 根据不同发行版执行升级
+    if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "在Debian/Ubuntu上升级MySQL..."
         apt update
         apt upgrade -y mysql-server
-    elif [ [ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ] ]; then
+    elif [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
         print_info "在RHEL/CentOS/Rocky上升级MySQL..."
-        if [  "$MAJOR_VER" -ge 8  ]; then
+        if [ "$MAJOR_VER" -ge 8 ]; then
             dnf upgrade -y mysql-community-server
         else
             yum upgrade -y mysql-community-server
@@ -979,7 +1033,9 @@ upgrade_mysql() {
     NEW_VERSION=$(mysql -V | awk '{print $3}')
     print_success "MySQL升级完成: $CURRENT_VERSION -> $NEW_VERSION"
     return 0
-}\n\n# 修改显示实时数据库连接的函数，使用交互方式输入密码
+}
+
+# 修改显示实时数据库连接的函数，使用交互方式输入密码
 show_active_connections() {
     print_info "显示实时数据库连接..."
     
@@ -1010,7 +1066,9 @@ show_active_connections() {
     }
     
     return 0
-}\n\n# 修改查看数据库错误日志的函数，使用交互方式输入密码
+}
+
+# 修改查看数据库错误日志的函数，使用交互方式输入密码
 show_error_log() {
     print_info "查看数据库错误日志..."
     # 查找错误日志位置
@@ -1028,17 +1086,17 @@ show_error_log() {
         ERROR_LOG=$(mysql -u root -p -e "SHOW VARIABLES LIKE 'log_error';" | grep log_error | awk '{print $2}')
     fi
     
-    if [  -z "$ERROR_LOG"  ]; then
+    if [ -z "$ERROR_LOG" ]; then
         # 尝试常见的错误日志位置
         for log_path in "/var/log/mysql/error.log" "/var/log/mysqld.log" "/var/log/mariadb/mariadb.log"; do
-            if [  -f "$log_path"  ]; then
+            if [ -f "$log_path" ]; then
                 ERROR_LOG="$log_path"
                 break
             fi
         done
     fi
     
-    if [  -z "$ERROR_LOG" ] || [ ! -f "$ERROR_LOG"  ]; then
+    if [ -z "$ERROR_LOG" ] || [ ! -f "$ERROR_LOG" ]; then
         print_error "找不到数据库错误日志文件"
         return 1
     fi
@@ -1052,7 +1110,9 @@ show_error_log() {
     echo "==================================================="
     
     return 0
-}\n\n# 修改监控数据库性能的函数，使用交互方式输入密码
+}
+
+# 修改监控数据库性能的函数，使用交互方式输入密码
 monitor_database_performance() {
     print_info "监控数据库性能..."
     
@@ -1101,7 +1161,9 @@ monitor_database_performance() {
     echo "==================================================="
     
     return 0
-}\n\n# 检查并更新脚本
+}
+
+# 检查并更新脚本
 check_for_updates() {
     print_info "检查脚本更新..."
     # 确保 curl 已安装
@@ -1124,7 +1186,7 @@ check_for_updates() {
     # 从当前运行的脚本文件中读取实际版本号
     CURRENT_VERSION=$(grep -m 1 "SCRIPT_VERSION=" "$SCRIPT_PATH" | cut -d'"' -f2)
     # 如果无法从文件中读取版本号，则使用变量中的版本号作为后备
-    if [  -z "$CURRENT_VERSION"  ]; then
+    if [ -z "$CURRENT_VERSION" ]; then
         CURRENT_VERSION="$SCRIPT_VERSION"
         print_warning "无法从脚本文件读取版本号，使用内存中的版本号: $CURRENT_VERSION"
     fi
@@ -1133,7 +1195,7 @@ check_for_updates() {
     print_info "从 GitHub 获取最新版本..."
     # 尝试从 GitHub 获取最新版本
     LATEST_VERSION=$(curl -s "https://raw.githubusercontent.com/$GITHUB_REPO/main/deploymysql.sh" | grep -m 1 "SCRIPT_VERSION=" | cut -d'"' -f2)
-    if [  -z "$LATEST_VERSION"  ]; then
+    if [ -z "$LATEST_VERSION" ]; then
         print_warning "无法获取最新版本信息，跳过更新"
         return 1
     fi
@@ -1142,7 +1204,7 @@ check_for_updates() {
     print_info "最新版本: $LATEST_VERSION"
     
     # 比较版本
-    if [  "$CURRENT_VERSION" != "$LATEST_VERSION"  ]; then
+    if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
         print_info "发现新版本，准备更新..."
         # 备份当前脚本
         cp "$SCRIPT_PATH" "${SCRIPT_PATH}.bak"
@@ -1161,7 +1223,10 @@ check_for_updates() {
     else
         print_success "脚本已是最新版本"
         return 0
-    fi\n}\n\n# 手动更新脚本
+    fi
+}
+
+# 手动更新脚本
 update_script() {
     print_info "手动更新脚本..."
     # 确认更新
@@ -1170,13 +1235,15 @@ update_script() {
     echo "请输入 'YES' 确认更新:"
     read confirm
     
-    if [  "$confirm" != "YES"  ]; then
+    if [ "$confirm" != "YES" ]; then
         print_info "更新已取消"
         return 0
     fi
     
     check_for_updates
-}\n\n# 修改显示菜单，添加卸载选项
+}
+
+# 修改显示菜单，添加卸载选项
 show_menu() {
     clear
     echo "=================================================="
@@ -1195,7 +1262,9 @@ show_menu() {
     echo "=================================================="
     echo ""
     echo -n "请选择操作 [0-9]: "
-}\n\n# 修改主函数，添加卸载选项
+}
+
+# 修改主函数，添加卸载选项
 main() {
     check_root
     detect_distro
@@ -1208,12 +1277,12 @@ main() {
             1)
                 print_info "开始数据库安装..."
                 # 根据发行版安装MySQL或MariaDB
-                if [ [ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ] ]; then
+                if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
                     install_mysql_debian
-                elif [ [ "$ID" == "rocky" ]] && [[ "$MAJOR_VER" -ge 9 ] ]; then
+                elif [[ "$ID" == "rocky" ]] && [[ "$MAJOR_VER" -ge 9 ]]; then
                     # 对于Rocky Linux 9，直接安装MariaDB
                     install_rocky9_mariadb
-                elif [ [ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ] ]; then
+                elif [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
                     install_mysql_rhel
                 else
                     install_mysql_other
@@ -1271,5 +1340,7 @@ main() {
                 ;;
         esac
     done
-}\n\n# 执行主函数
+}
+
+# 执行主函数
 main
