@@ -3,7 +3,7 @@
 # 作者：Claude
 # 日期：2024-02-26
 # 脚本版本
-SCRIPT_VERSION="1.0.12"
+SCRIPT_VERSION="1.0.13"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 设置verbose模式默认为关闭
@@ -608,204 +608,145 @@ reset_mysql_password() {
     execute_cmd "systemctl stop mysqld 2>/dev/null" "停止mysqld服务" || true
     execute_cmd "systemctl stop mariadb 2>/dev/null" "停止MariaDB服务" || true
     
-    # 检查mysqld_safe命令是否存在
-    if ! command -v mysqld_safe >/dev/null 2>&1; then
-        print_warning "mysqld_safe命令不存在，尝试使用配置文件方式..."
-        
-        # 创建临时目录存放pid文件
-        print_debug "创建临时目录存放pid文件..."
-        execute_cmd "mkdir -p /var/run/mysqld" "创建临时目录失败" || true
-        execute_cmd "chown mysql:mysql /var/run/mysqld 2>/dev/null" "修改目录所有者失败" || true
-        
-        # 尝试使用服务方式重置
-        print_info "尝试使用服务管理器方式重置密码..."
-        print_info "这种方式需要系统管理员权限..."
-        
-        # 尝试创建一个临时配置文件来跳过授权表
-        MYSQL_CONF_DIR=""
-        print_debug "寻找适合的MySQL配置目录..."
-        for dir in "/etc/mysql/conf.d" "/etc/my.cnf.d" "/etc/mysql"; do
-            if [ -d "$dir" ]; then
-                MYSQL_CONF_DIR="$dir"
-                print_debug "找到MySQL配置目录: $dir"
-                break
-            fi
-        done
-        
-        if [ -n "$MYSQL_CONF_DIR" ]; then
-            print_debug "创建跳过授权表的临时配置文件..."
-            cat > "$MYSQL_CONF_DIR/mysql-reset.cnf" << EOF
-[mysqld]
-skip-grant-tables
-skip-networking
-EOF
-            
-            # 启动MySQL服务
-            print_debug "启动MySQL服务..."
-            execute_cmd "systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null" "启动服务失败" || true
-            
-            # 等待MySQL启动
-            print_info "等待MySQL启动..."
-            print_debug "等待10秒确保MySQL完全启动..."
-            sleep 10
-            
-            # 重置root密码 - 首先尝试新语法
-            print_info "重置root密码..."
-            print_debug "使用新语法(ALTER USER)重置密码..."
-            
-            local tmp_sql_file=$(mktemp)
-            cat > "$tmp_sql_file" << EOF
+    print_debug "等待服务完全停止..."
+    sleep 3
+    
+    # 使用MySQL 8.0+官方推荐方式重置密码
+    print_info "使用官方推荐方式重置MySQL密码（MySQL 8.0+）..."
+    
+    # 创建临时目录存放pid文件
+    print_debug "创建临时目录存放pid文件..."
+    execute_cmd "mkdir -p /var/run/mysqld" "创建临时目录失败" || true
+    execute_cmd "chown mysql:mysql /var/run/mysqld 2>/dev/null" "修改目录所有者失败" || true
+    
+    # 以跳过授权表方式启动MySQL，使用mysql用户
+    print_info "以安全模式启动MySQL，明确使用mysql用户..."
+    print_debug "使用--skip-grant-tables和--skip-networking选项启动mysqld..."
+    
+    if [ "$VERBOSE_MODE" = true ]; then
+        execute_cmd "sudo -u mysql mysqld --skip-grant-tables --skip-networking &" "以mysql用户启动mysqld失败" || {
+            print_warning "使用sudo -u mysql启动失败，尝试使用--user=mysql选项..."
+            execute_cmd "mysqld --skip-grant-tables --skip-networking --user=mysql &" "以--user=mysql选项启动mysqld失败" || {
+                print_error "无法以mysql用户启动mysqld，请检查权限和配置"
+                return 1
+            }
+        }
+    else
+        execute_cmd "sudo -u mysql mysqld --skip-grant-tables --skip-networking > /dev/null 2>&1 &" "以mysql用户启动mysqld失败" || {
+            print_warning "使用sudo -u mysql启动失败，尝试使用--user=mysql选项..."
+            execute_cmd "mysqld --skip-grant-tables --skip-networking --user=mysql > /dev/null 2>&1 &" "以--user=mysql选项启动mysqld失败" || {
+                print_error "无法以mysql用户启动mysqld，请检查权限和配置"
+                return 1
+            }
+        }
+    fi
+    
+    # 等待MySQL启动
+    print_info "等待MySQL启动..."
+    print_debug "等待10秒确保MySQL完全启动..."
+    sleep 10
+    
+    # 查找mysql套接字
+    print_info "查找MySQL套接字文件..."
+    MYSQL_SOCKET=""
+    for socket_path in "/var/run/mysqld/mysqld.sock" "/var/lib/mysql/mysql.sock" "/tmp/mysql.sock"; do
+        if [ -S "$socket_path" ]; then
+            MYSQL_SOCKET="$socket_path"
+            print_debug "找到MySQL套接字: $socket_path"
+            break
+        fi
+    done
+    
+    if [ -z "$MYSQL_SOCKET" ]; then
+        print_warning "未找到MySQL套接字文件，使用默认连接方式"
+        SOCKET_OPTION=""
+    else
+        SOCKET_OPTION="--socket=$MYSQL_SOCKET"
+    fi
+    
+    # 重置root密码 - 使用mysql_native_password认证方式
+    print_info "重置root密码，明确使用mysql_native_password认证方式..."
+    print_debug "使用ALTER USER命令指定mysql_native_password认证方式..."
+    
+    local tmp_sql_file=$(mktemp)
+    cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
-ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';
 FLUSH PRIVILEGES;
 EOF
-            
-            if [ "$VERBOSE_MODE" = true ]; then
-                mysql -u root < "$tmp_sql_file" 2>&1
-            else
-                mysql -u root < "$tmp_sql_file" 2>/dev/null
-            fi
-            
-            RESET_RESULT=$?
-            if [ $RESET_RESULT -eq 0 ]; then
-                print_success "root密码重置成功"
-            else
-                print_warning "使用新语法重置密码失败，尝试旧语法..."
-                print_debug "使用旧语法(UPDATE authentication_string)重置密码..."
-                
-                cat > "$tmp_sql_file" << EOF
+    
+    if [ "$VERBOSE_MODE" = true ]; then
+        mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>&1
+    else
+        mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>/dev/null
+    fi
+    
+    RESET_RESULT=$?
+    if [ $RESET_RESULT -eq 0 ]; then
+        print_success "root密码重置成功（使用mysql_native_password认证方式）"
+    else
+        print_error "使用新语法重置密码失败，MySQL可能版本较旧"
+        print_debug "尝试使用旧版本MySQL的语法重置密码..."
+        
+        cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root' AND Host='localhost';
 FLUSH PRIVILEGES;
 EOF
-                
-                if [ "$VERBOSE_MODE" = true ]; then
-                    mysql -u root < "$tmp_sql_file" 2>&1
-                else
-                    mysql -u root < "$tmp_sql_file" 2>/dev/null
-                fi
-                
-                RESET_RESULT=$?
-                if [ $RESET_RESULT -eq 0 ]; then
-                    print_success "root密码重置成功（使用旧语法）"
-                else
-                    print_error "无法重置root密码，尝试MariaDB特定语法..."
-                    print_debug "使用MariaDB特定语法(UPDATE Password)重置密码..."
-                    
-                    cat > "$tmp_sql_file" << EOF
-FLUSH PRIVILEGES;
-UPDATE mysql.user SET Password=PASSWORD('$MYSQL_ROOT_PASS') WHERE User='root';
-FLUSH PRIVILEGES;
-EOF
-                    
-                    if [ "$VERBOSE_MODE" = true ]; then
-                        mysql -u root < "$tmp_sql_file" 2>&1
-                    else
-                        mysql -u root < "$tmp_sql_file" 2>/dev/null
-                    fi
-                    
-                    if [ $? -eq 0 ]; then
-                        print_success "root密码重置成功（使用MariaDB语法）"
-                    else
-                        print_error "无法重置root密码，请手动重置"
-                        # 删除临时配置并重启MySQL
-                        print_debug "删除临时配置文件并重启MySQL..."
-                        execute_cmd "rm -f $MYSQL_CONF_DIR/mysql-reset.cnf" "删除临时配置文件失败" || true
-                        execute_cmd "systemctl restart mysql 2>/dev/null || systemctl restart mysqld 2>/dev/null || systemctl restart mariadb 2>/dev/null" "重启MySQL服务失败" || true
-                        rm -f "$tmp_sql_file"
-                        return 1
-                    fi
-                fi
-            fi
-            
-            # 删除临时配置并重启MySQL
-            print_debug "删除临时配置文件并重启MySQL..."
-            execute_cmd "rm -f $MYSQL_CONF_DIR/mysql-reset.cnf" "删除临时配置文件失败" || true
-            execute_cmd "systemctl restart mysql 2>/dev/null || systemctl restart mysqld 2>/dev/null || systemctl restart mariadb 2>/dev/null" "重启MySQL服务失败" || true
-            rm -f "$tmp_sql_file"
-        else
-            print_error "无法找到MySQL配置目录，无法使用此方法重置密码"
-            print_info "请尝试手动重置密码，或在有mysqld_safe命令的环境中运行此脚本"
-            return 1
-        fi
-    else
-        # 以跳过授权表的方式启动MySQL
-        print_info "以安全模式启动MySQL..."
-        
-        # 创建临时目录存放pid文件
-        print_debug "创建临时目录存放pid文件..."
-        execute_cmd "mkdir -p /var/run/mysqld" "创建临时目录失败" || true
-        execute_cmd "chown mysql:mysql /var/run/mysqld 2>/dev/null" "修改目录所有者失败" || true
-        
-        # 启动MySQL安全模式
-        print_info "启动MySQL安全模式，这可能需要一些时间..."
-        print_debug "使用mysqld_safe启动MySQL安全模式..."
         
         if [ "$VERBOSE_MODE" = true ]; then
-            mysqld_safe --skip-grant-tables --skip-networking &
+            mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>&1
         else
-            mysqld_safe --skip-grant-tables --skip-networking > /dev/null 2>&1 &
-        fi
-        
-        # 等待MySQL启动
-        print_info "等待MySQL启动..."
-        print_debug "等待10秒确保MySQL完全启动..."
-        sleep 10
-        
-        # 重置root密码 - 首先尝试新语法
-        print_info "重置root密码..."
-        print_debug "使用新语法(ALTER USER)重置密码..."
-        
-        local tmp_sql_file=$(mktemp)
-        cat > "$tmp_sql_file" << EOF
-FLUSH PRIVILEGES;
-ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';
-FLUSH PRIVILEGES;
-EOF
-        
-        if [ "$VERBOSE_MODE" = true ]; then
-            mysql -u root < "$tmp_sql_file" 2>&1
-        else
-            mysql -u root < "$tmp_sql_file" 2>/dev/null
+            mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>/dev/null
         fi
         
         RESET_RESULT=$?
         if [ $RESET_RESULT -eq 0 ]; then
-            print_success "root密码重置成功"
+            print_success "root密码重置成功（使用旧语法）"
         else
-            print_warning "使用新语法重置密码失败，尝试旧语法..."
-            print_debug "使用旧语法(UPDATE authentication_string)重置密码..."
+            print_error "无法重置root密码，尝试MariaDB特定语法..."
+            print_debug "使用MariaDB特定语法(UPDATE Password)重置密码..."
             
             cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
-UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root' AND Host='localhost';
+UPDATE mysql.user SET Password=PASSWORD('$MYSQL_ROOT_PASS') WHERE User='root';
 FLUSH PRIVILEGES;
 EOF
             
             if [ "$VERBOSE_MODE" = true ]; then
-                mysql -u root < "$tmp_sql_file" 2>&1
+                mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>&1
             else
-                mysql -u root < "$tmp_sql_file" 2>/dev/null
+                mysql -u root $SOCKET_OPTION < "$tmp_sql_file" 2>/dev/null
             fi
             
-            RESET_RESULT=$?
-            if [ $RESET_RESULT -eq 0 ]; then
-                print_success "root密码重置成功（使用旧语法）"
+            if [ $? -eq 0 ]; then
+                print_success "root密码重置成功（使用MariaDB语法）"
             else
-                print_error "无法重置root密码，请手动重置密码"
+                print_error "无法重置root密码，请手动重置"
+                print_info "可尝试以下手动步骤: "
+                print_info "1. pkill mysqld"
+                print_info "2. sudo -u mysql mysqld --skip-grant-tables --skip-networking &"
+                print_info "3. mysql -u root"
+                print_info "4. 执行: FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '新密码'; FLUSH PRIVILEGES;"
+                rm -f "$tmp_sql_file"
+                return 1
             fi
         fi
-        
-        # 停止MySQL安全模式
-        print_info "停止MySQL安全模式..."
-        print_debug "使用pkill终止mysqld进程..."
-        execute_cmd "pkill mysqld" "停止MySQL安全模式失败" || true
-        rm -f "$tmp_sql_file"
     fi
+    
+    # 停止MySQL安全模式
+    print_info "停止MySQL安全模式..."
+    print_debug "使用pkill终止mysqld进程..."
+    execute_cmd "pkill mysqld" "停止MySQL安全模式失败" || true
+    rm -f "$tmp_sql_file"
+    
+    # 等待进程完全终止
+    print_debug "等待进程完全终止..."
+    sleep 5
     
     # 重启MySQL服务
     print_info "重启MySQL服务..."
-    print_debug "尝试启动MySQL服务..."
+    print_debug "尝试正常启动MySQL服务..."
     execute_cmd "systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null" "启动MySQL服务失败" || true
     
     # 等待服务启动
