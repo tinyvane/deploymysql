@@ -3,7 +3,7 @@
 # 作者：Claude
 # 日期：2024-02-26
 # 脚本版本
-SCRIPT_VERSION="1.0.11"
+SCRIPT_VERSION="1.0.12"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 设置verbose模式默认为关闭
