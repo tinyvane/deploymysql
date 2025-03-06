@@ -3,7 +3,7 @@
 # 作者：Claude
 # 日期：2024-02-26
 # 脚本版本
-SCRIPT_VERSION="1.0.10"
+SCRIPT_VERSION="1.0.11"
 GITHUB_REPO="tinyvane/deploymysql"
 
 # 设置verbose模式默认为关闭
@@ -24,9 +24,25 @@ DB_USER="app_user"
 DB_PASS=""
 MYSQL_ROOT_PASS=""
 
+# 添加在脚本开头变量定义部分
+LOG_FILE="/var/log/deploymysql.log"
+LOG_ENABLED=true
+
+# 日志函数
+log_message() {
+    local level="$1"
+    local message="$2"
+    
+    if [ "$LOG_ENABLED" = true ]; then
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    fi
+}
+
 # 打印带颜色的信息
 print_info() {
     echo -e "${BLUE}[信息]${NC} $1"
+    log_message "INFO" "$1"
 }
 
 print_success() {
@@ -39,6 +55,7 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[错误]${NC} $1"
+    log_message "ERROR" "$1"
 }
 
 # 添加调试信息打印函数
@@ -52,25 +69,22 @@ print_debug() {
 execute_cmd() {
     local cmd="$1"
     local error_msg="$2"
+    local recovery_hint="$3"  # 新增参数：恢复提示
     
     print_debug "执行命令: $cmd"
     
     if [ "$VERBOSE_MODE" = true ]; then
-        # verbose模式下，直接执行命令并显示输出
         eval "$cmd"
         local status=$?
     else
-        # 非verbose模式下，不显示命令的标准输出
         eval "$cmd" > /dev/null
         local status=$?
     fi
     
     if [ $status -ne 0 ]; then
         print_error "$error_msg (退出码: $status)"
-        if [ "$VERBOSE_MODE" = true ]; then
-            print_debug "命令执行失败，请检查上面的输出以获取更多信息"
-        else
-            print_debug "命令执行失败，请使用verbose模式查看详细错误信息"
+        if [ -n "$recovery_hint" ]; then
+            print_info "建议: $recovery_hint"
         fi
         return $status
     else
