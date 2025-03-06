@@ -6,11 +6,15 @@
 SCRIPT_VERSION="1.0.9"
 GITHUB_REPO="tinyvane/deploymysql"
 
+# 设置verbose模式默认为关闭
+VERBOSE_MODE=false
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'  # 添加青色用于调试信息
 NC='\033[0m' # No Color
 
 # 数据库配置
@@ -35,6 +39,56 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[错误]${NC} $1"
+}
+
+# 添加调试信息打印函数
+print_debug() {
+    if [ "$VERBOSE_MODE" = true ]; then
+        echo -e "${CYAN}[调试]${NC} $1"
+    fi
+}
+
+# 执行命令并输出调试信息
+execute_cmd() {
+    local cmd="$1"
+    local error_msg="$2"
+    
+    print_debug "执行命令: $cmd"
+    
+    if [ "$VERBOSE_MODE" = true ]; then
+        # verbose模式下，直接执行命令并显示输出
+        eval "$cmd"
+        local status=$?
+    else
+        # 非verbose模式下，不显示命令的标准输出
+        eval "$cmd" > /dev/null
+        local status=$?
+    fi
+    
+    if [ $status -ne 0 ]; then
+        print_error "$error_msg (退出码: $status)"
+        if [ "$VERBOSE_MODE" = true ]; then
+            print_debug "命令执行失败，请检查上面的输出以获取更多信息"
+        else
+            print_debug "命令执行失败，请使用verbose模式查看详细错误信息"
+        fi
+        return $status
+    else
+        print_debug "命令执行成功"
+    fi
+    
+    return 0
+}
+
+# 切换verbose模式
+toggle_verbose_mode() {
+    if [ "$VERBOSE_MODE" = true ]; then
+        VERBOSE_MODE=false
+        print_info "Verbose模式已关闭"
+    else
+        VERBOSE_MODE=true
+        print_info "Verbose模式已开启"
+    fi
 }
 
 # 获取数据库密码
@@ -98,16 +152,20 @@ install_mysql_debian() {
     print_info "在 Debian/Ubuntu 上安装 MySQL..."
     
     # 更新软件包列表
-    apt update
+    print_debug "更新软件包列表..."
+    execute_cmd "apt update" "软件包列表更新失败"
     
     # 安装MySQL
-    DEBIAN_FRONTEND=noninteractive apt install -y mysql-server
+    print_debug "安装MySQL服务器..."
+    execute_cmd "DEBIAN_FRONTEND=noninteractive apt install -y mysql-server" "MySQL服务器安装失败"
     
     # 启动MySQL服务
-    systemctl start mysql
+    print_debug "启动MySQL服务..."
+    execute_cmd "systemctl start mysql" "MySQL服务启动失败"
     
     # 设置开机自启
-    systemctl enable mysql
+    print_debug "设置MySQL开机自启..."
+    execute_cmd "systemctl enable mysql" "设置MySQL开机自启失败"
     
     print_success "MySQL 安装完成"
 }
@@ -414,13 +472,17 @@ secure_mysql() {
         return 1
     fi
     
+    print_debug "检测数据库类型和操作系统..."
+    
     # 检查是否是Debian/Ubuntu
     if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "设置root密码..."
         
         # 尝试使用sudo直接访问MySQL
+        print_debug "尝试使用sudo直接访问MySQL..."
         if sudo mysql -e "SELECT 1;" >/dev/null 2>&1; then
             print_info "使用sudo访问MySQL成功，设置root密码..."
+            print_debug "使用mysql_native_password插件设置root密码..."
             if sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null; then
                 print_success "root密码设置成功"
             else
@@ -428,18 +490,25 @@ secure_mysql() {
             fi
         else
             # 尝试标准方式设置密码
-            mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';" 2>/dev/null || {
-                print_warning "无法设置root密码，尝试MariaDB方式"
-                mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
-                    print_warning "无法设置root密码，尝试重置密码方法"
+            print_debug "尝试使用标准方式设置root密码..."
+            if mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';" 2>/dev/null; then
+                print_success "root密码设置成功（使用标准方式）"
+            else
+                print_warning "无法使用标准方式设置root密码，尝试MariaDB方式"
+                print_debug "尝试使用mysqladmin设置root密码..."
+                if mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null; then
+                    print_success "root密码设置成功（使用mysqladmin）"
+                else
+                    print_warning "无法使用mysqladmin设置root密码，尝试重置密码方法"
                     reset_mysql_password
-                }
-            }
+                fi
+            fi
         fi
     else
         # 对于CentOS/RHEL/Rocky，使用临时密码登录并修改
         if [ -n "$TEMP_PASS" ]; then
             print_info "使用临时密码设置root密码..."
+            print_debug "使用临时密码登录并设置新密码..."
             if mysql --connect-expired-password -u root -p"$TEMP_PASS" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null; then
                 print_success "root密码设置成功"
             else
@@ -448,8 +517,10 @@ secure_mysql() {
             fi
         else
             # 尝试使用sudo直接访问MySQL
+            print_debug "尝试使用sudo直接访问MySQL..."
             if sudo mysql -e "SELECT 1;" >/dev/null 2>&1; then
                 print_info "使用sudo访问MySQL成功，设置root密码..."
+                print_debug "使用sudo执行ALTER USER命令..."
                 if sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null; then
                     print_success "root密码设置成功"
                 else
@@ -458,28 +529,44 @@ secure_mysql() {
                 fi
             else
                 print_warning "无法获取临时密码，尝试MariaDB方式设置root密码"
-                mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null || {
-                    print_warning "无法设置root密码，尝试重置密码方法"
+                print_debug "尝试使用mysqladmin设置root密码..."
+                if mysqladmin -u root password "$MYSQL_ROOT_PASS" 2>/dev/null; then
+                    print_success "root密码设置成功（使用mysqladmin）"
+                else
+                    print_warning "无法使用mysqladmin设置root密码，尝试重置密码方法"
                     reset_mysql_password
-                }
+                fi
             fi
         fi
     fi
     
     # 使用新密码执行安全设置
     print_info "执行安全设置..."
-    mysql -u root -p"$MYSQL_ROOT_PASS" <<EOF 2>/dev/null
+    print_debug "执行MySQL安全设置命令..."
+    local tmp_sql_file=$(mktemp)
+    
+    cat > "$tmp_sql_file" << EOF
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
-
-if [ $? -ne 0 ]; then
-    print_warning "无法使用设置的密码连接MySQL，跳过安全设置"
-    return 1
-fi
+    
+    print_debug "使用新设置的root密码连接并执行安全设置..."
+    if [ "$VERBOSE_MODE" = true ]; then
+        mysql -u root -p"$MYSQL_ROOT_PASS" < "$tmp_sql_file" 2>&1
+    else
+        mysql -u root -p"$MYSQL_ROOT_PASS" < "$tmp_sql_file" 2>/dev/null
+    fi
+    
+    local status=$?
+    rm -f "$tmp_sql_file"
+    
+    if [ $status -ne 0 ]; then
+        print_warning "无法使用设置的密码连接MySQL，跳过安全设置"
+        return 1
+    fi
     
     print_success "数据库安全设置完成"
     return 0
@@ -502,17 +589,19 @@ reset_mysql_password() {
     
     # 停止MySQL服务
     print_info "停止MySQL服务..."
-    systemctl stop mysql 2>/dev/null
-    systemctl stop mysqld 2>/dev/null
-    systemctl stop mariadb 2>/dev/null
+    print_debug "尝试停止所有MySQL相关服务..."
+    execute_cmd "systemctl stop mysql 2>/dev/null" "停止MySQL服务" || true
+    execute_cmd "systemctl stop mysqld 2>/dev/null" "停止mysqld服务" || true
+    execute_cmd "systemctl stop mariadb 2>/dev/null" "停止MariaDB服务" || true
     
     # 检查mysqld_safe命令是否存在
     if ! command -v mysqld_safe >/dev/null 2>&1; then
         print_warning "mysqld_safe命令不存在，尝试使用配置文件方式..."
         
         # 创建临时目录存放pid文件
-        mkdir -p /var/run/mysqld
-        chown mysql:mysql /var/run/mysqld 2>/dev/null || true
+        print_debug "创建临时目录存放pid文件..."
+        execute_cmd "mkdir -p /var/run/mysqld" "创建临时目录失败" || true
+        execute_cmd "chown mysql:mysql /var/run/mysqld 2>/dev/null" "修改目录所有者失败" || true
         
         # 尝试使用服务方式重置
         print_info "尝试使用服务管理器方式重置密码..."
@@ -520,80 +609,106 @@ reset_mysql_password() {
         
         # 尝试创建一个临时配置文件来跳过授权表
         MYSQL_CONF_DIR=""
+        print_debug "寻找适合的MySQL配置目录..."
         for dir in "/etc/mysql/conf.d" "/etc/my.cnf.d" "/etc/mysql"; do
             if [ -d "$dir" ]; then
                 MYSQL_CONF_DIR="$dir"
+                print_debug "找到MySQL配置目录: $dir"
                 break
             fi
         done
         
         if [ -n "$MYSQL_CONF_DIR" ]; then
-            echo "[mysqld]
+            print_debug "创建跳过授权表的临时配置文件..."
+            cat > "$MYSQL_CONF_DIR/mysql-reset.cnf" << EOF
+[mysqld]
 skip-grant-tables
-skip-networking" > "$MYSQL_CONF_DIR/mysql-reset.cnf"
+skip-networking
+EOF
             
             # 启动MySQL服务
-            systemctl start mysql 2>/dev/null || 
-            systemctl start mysqld 2>/dev/null || 
-            systemctl start mariadb 2>/dev/null
+            print_debug "启动MySQL服务..."
+            execute_cmd "systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null" "启动服务失败" || true
             
             # 等待MySQL启动
             print_info "等待MySQL启动..."
+            print_debug "等待10秒确保MySQL完全启动..."
             sleep 10
             
             # 重置root密码 - 首先尝试新语法
             print_info "重置root密码..."
-            mysql -u root <<EOF
+            print_debug "使用新语法(ALTER USER)重置密码..."
+            
+            local tmp_sql_file=$(mktemp)
+            cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';
 FLUSH PRIVILEGES;
 EOF
+            
+            if [ "$VERBOSE_MODE" = true ]; then
+                mysql -u root < "$tmp_sql_file" 2>&1
+            else
+                mysql -u root < "$tmp_sql_file" 2>/dev/null
+            fi
             
             RESET_RESULT=$?
             if [ $RESET_RESULT -eq 0 ]; then
                 print_success "root密码重置成功"
             else
                 print_warning "使用新语法重置密码失败，尝试旧语法..."
+                print_debug "使用旧语法(UPDATE authentication_string)重置密码..."
                 
-                # 尝试使用旧语法
-                mysql -u root <<EOF
+                cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root' AND Host='localhost';
 FLUSH PRIVILEGES;
 EOF
+                
+                if [ "$VERBOSE_MODE" = true ]; then
+                    mysql -u root < "$tmp_sql_file" 2>&1
+                else
+                    mysql -u root < "$tmp_sql_file" 2>/dev/null
+                fi
                 
                 RESET_RESULT=$?
                 if [ $RESET_RESULT -eq 0 ]; then
                     print_success "root密码重置成功（使用旧语法）"
                 else
                     print_error "无法重置root密码，尝试MariaDB特定语法..."
+                    print_debug "使用MariaDB特定语法(UPDATE Password)重置密码..."
                     
-                    # 尝试MariaDB特定语法
-                    mysql -u root <<EOF
+                    cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 UPDATE mysql.user SET Password=PASSWORD('$MYSQL_ROOT_PASS') WHERE User='root';
 FLUSH PRIVILEGES;
 EOF
+                    
+                    if [ "$VERBOSE_MODE" = true ]; then
+                        mysql -u root < "$tmp_sql_file" 2>&1
+                    else
+                        mysql -u root < "$tmp_sql_file" 2>/dev/null
+                    fi
                     
                     if [ $? -eq 0 ]; then
                         print_success "root密码重置成功（使用MariaDB语法）"
                     else
                         print_error "无法重置root密码，请手动重置"
                         # 删除临时配置并重启MySQL
-                        rm -f "$MYSQL_CONF_DIR/mysql-reset.cnf"
-                        systemctl restart mysql 2>/dev/null || 
-                        systemctl restart mysqld 2>/dev/null || 
-                        systemctl restart mariadb 2>/dev/null
+                        print_debug "删除临时配置文件并重启MySQL..."
+                        execute_cmd "rm -f $MYSQL_CONF_DIR/mysql-reset.cnf" "删除临时配置文件失败" || true
+                        execute_cmd "systemctl restart mysql 2>/dev/null || systemctl restart mysqld 2>/dev/null || systemctl restart mariadb 2>/dev/null" "重启MySQL服务失败" || true
+                        rm -f "$tmp_sql_file"
                         return 1
                     fi
                 fi
             fi
             
             # 删除临时配置并重启MySQL
-            rm -f "$MYSQL_CONF_DIR/mysql-reset.cnf"
-            systemctl restart mysql 2>/dev/null || 
-            systemctl restart mysqld 2>/dev/null || 
-            systemctl restart mariadb 2>/dev/null
+            print_debug "删除临时配置文件并重启MySQL..."
+            execute_cmd "rm -f $MYSQL_CONF_DIR/mysql-reset.cnf" "删除临时配置文件失败" || true
+            execute_cmd "systemctl restart mysql 2>/dev/null || systemctl restart mysqld 2>/dev/null || systemctl restart mariadb 2>/dev/null" "重启MySQL服务失败" || true
+            rm -f "$tmp_sql_file"
         else
             print_error "无法找到MySQL配置目录，无法使用此方法重置密码"
             print_info "请尝试手动重置密码，或在有mysqld_safe命令的环境中运行此脚本"
@@ -604,37 +719,60 @@ EOF
         print_info "以安全模式启动MySQL..."
         
         # 创建临时目录存放pid文件
-        mkdir -p /var/run/mysqld
-        chown mysql:mysql /var/run/mysqld 2>/dev/null || true
+        print_debug "创建临时目录存放pid文件..."
+        execute_cmd "mkdir -p /var/run/mysqld" "创建临时目录失败" || true
+        execute_cmd "chown mysql:mysql /var/run/mysqld 2>/dev/null" "修改目录所有者失败" || true
         
         # 启动MySQL安全模式
         print_info "启动MySQL安全模式，这可能需要一些时间..."
-        mysqld_safe --skip-grant-tables --skip-networking &
+        print_debug "使用mysqld_safe启动MySQL安全模式..."
+        
+        if [ "$VERBOSE_MODE" = true ]; then
+            mysqld_safe --skip-grant-tables --skip-networking &
+        else
+            mysqld_safe --skip-grant-tables --skip-networking > /dev/null 2>&1 &
+        fi
         
         # 等待MySQL启动
         print_info "等待MySQL启动..."
+        print_debug "等待10秒确保MySQL完全启动..."
         sleep 10
         
         # 重置root密码 - 首先尝试新语法
         print_info "重置root密码..."
-        mysql -u root <<EOF
+        print_debug "使用新语法(ALTER USER)重置密码..."
+        
+        local tmp_sql_file=$(mktemp)
+        cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASS';
 FLUSH PRIVILEGES;
 EOF
+        
+        if [ "$VERBOSE_MODE" = true ]; then
+            mysql -u root < "$tmp_sql_file" 2>&1
+        else
+            mysql -u root < "$tmp_sql_file" 2>/dev/null
+        fi
         
         RESET_RESULT=$?
         if [ $RESET_RESULT -eq 0 ]; then
             print_success "root密码重置成功"
         else
             print_warning "使用新语法重置密码失败，尝试旧语法..."
+            print_debug "使用旧语法(UPDATE authentication_string)重置密码..."
             
-            # 尝试使用旧语法
-            mysql -u root <<EOF
+            cat > "$tmp_sql_file" << EOF
 FLUSH PRIVILEGES;
 UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root' AND Host='localhost';
 FLUSH PRIVILEGES;
 EOF
+            
+            if [ "$VERBOSE_MODE" = true ]; then
+                mysql -u root < "$tmp_sql_file" 2>&1
+            else
+                mysql -u root < "$tmp_sql_file" 2>/dev/null
+            fi
             
             RESET_RESULT=$?
             if [ $RESET_RESULT -eq 0 ]; then
@@ -646,19 +784,24 @@ EOF
         
         # 停止MySQL安全模式
         print_info "停止MySQL安全模式..."
-        pkill mysqld
+        print_debug "使用pkill终止mysqld进程..."
+        execute_cmd "pkill mysqld" "停止MySQL安全模式失败" || true
+        rm -f "$tmp_sql_file"
     fi
     
     # 重启MySQL服务
     print_info "重启MySQL服务..."
-    systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null
+    print_debug "尝试启动MySQL服务..."
+    execute_cmd "systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null" "启动MySQL服务失败" || true
     
     # 等待服务启动
+    print_debug "等待5秒确保MySQL完全启动..."
     sleep 5
     
     # 验证密码
     print_info "验证新密码..."
-    if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 'Password reset successful';" >/dev/null 2>&1; then
+    print_debug "尝试使用新密码连接到MySQL..."
+    if mysql -u root -p"$MYSQL_ROOT_PASS" -e "SELECT 'Password reset successful';" > /dev/null 2>&1; then
         print_success "密码验证成功，MySQL root密码已重置"
         return 0
     else
@@ -914,33 +1057,42 @@ uninstall_database() {
     
     # 停止服务
     print_info "停止数据库服务..."
-    systemctl stop mysql 2>/dev/null
-    systemctl stop mysqld 2>/dev/null
-    systemctl stop mariadb 2>/dev/null
+    print_debug "尝试停止所有MySQL相关服务..."
+    execute_cmd "systemctl stop mysql 2>/dev/null" "停止MySQL服务" || true
+    execute_cmd "systemctl stop mysqld 2>/dev/null" "停止mysqld服务" || true
+    execute_cmd "systemctl stop mariadb 2>/dev/null" "停止MariaDB服务" || true
     
     # 根据不同发行版卸载
     if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
         print_info "在Debian/Ubuntu上卸载数据库..."
-        apt purge -y mysql-server mysql-client mysql-common mariadb-server
-        apt autoremove -y
-        apt autoclean
+        print_debug "删除MySQL和MariaDB服务器及相关包..."
+        execute_cmd "apt purge -y mysql-server mysql-client mysql-common mariadb-server" "删除数据库包失败"
+        print_debug "删除不再需要的依赖包..."
+        execute_cmd "apt autoremove -y" "自动移除失败"
+        execute_cmd "apt autoclean" "清理包缓存失败"
     elif [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
         print_info "在RHEL/CentOS/Rocky上卸载数据库..."
         if [ "$MAJOR_VER" -ge 8 ]; then
-            dnf remove -y mysql-server mysql mysql-community-* mariadb mariadb-server
-            dnf module reset -y mysql
+            print_debug "使用dnf删除MySQL和MariaDB包..."
+            execute_cmd "dnf remove -y mysql-server mysql mysql-community-* mariadb mariadb-server" "删除数据库包失败"
+            print_debug "重置MySQL模块..."
+            execute_cmd "dnf module reset -y mysql" "MySQL模块重置失败"
         else
-            yum remove -y mysql-server mysql mysql-community-* mariadb mariadb-server
+            print_debug "使用yum删除MySQL和MariaDB包..."
+            execute_cmd "yum remove -y mysql-server mysql mysql-community-* mariadb mariadb-server" "删除数据库包失败"
         fi
     else
         print_warning "未能识别的Linux发行版，尝试通用方法..."
         if command -v apt >/dev/null; then
-            apt purge -y mysql-server mysql-client mysql-common mariadb-server
-            apt autoremove -y
+            print_debug "使用apt删除数据库包..."
+            execute_cmd "apt purge -y mysql-server mysql-client mysql-common mariadb-server" "删除数据库包失败"
+            execute_cmd "apt autoremove -y" "自动移除失败"
         elif command -v dnf >/dev/null; then
-            dnf remove -y mysql-server mysql mysql-community-* mariadb mariadb-server
+            print_debug "使用dnf删除数据库包..."
+            execute_cmd "dnf remove -y mysql-server mysql mysql-community-* mariadb mariadb-server" "删除数据库包失败"
         elif command -v yum >/dev/null; then
-            yum remove -y mysql-server mysql mysql-community-* mariadb mariadb-server
+            print_debug "使用yum删除数据库包..."
+            execute_cmd "yum remove -y mysql-server mysql mysql-community-* mariadb mariadb-server" "删除数据库包失败"
         else
             print_error "无法确定如何卸载数据库，请手动卸载"
             return 1
@@ -949,11 +1101,12 @@ uninstall_database() {
     
     # 删除数据目录
     print_info "删除数据目录..."
-    rm -rf /var/lib/mysql
-    rm -rf /var/lib/mariadb
-    rm -rf /etc/mysql
-    rm -rf /etc/my.cnf
-    rm -rf /etc/my.cnf.d
+    print_debug "删除MySQL和MariaDB数据目录..."
+    execute_cmd "rm -rf /var/lib/mysql" "删除MySQL数据目录失败" || true
+    execute_cmd "rm -rf /var/lib/mariadb" "删除MariaDB数据目录失败" || true
+    execute_cmd "rm -rf /etc/mysql" "删除MySQL配置目录失败" || true
+    execute_cmd "rm -rf /etc/my.cnf" "删除my.cnf配置文件失败" || true
+    execute_cmd "rm -rf /etc/my.cnf.d" "删除my.cnf.d配置目录失败" || true
     
     print_success "数据库卸载完成"
     return 0
@@ -1258,10 +1411,11 @@ show_menu() {
     echo "  7. 检查数据库状态"
     echo "  8. 更新部署脚本"
     echo "  9. 卸载数据库"
+    echo "  v. 切换调试信息模式 (当前: $(if [ "$VERBOSE_MODE" = true ]; then echo "开启"; else echo "关闭"; fi))"
     echo "  0. 退出"
     echo "=================================================="
     echo ""
-    echo -n "请选择操作 [0-9]: "
+    echo -n "请选择操作 [0-9,v]: "
 }
 
 # 修改主函数，添加卸载选项
@@ -1328,6 +1482,10 @@ main() {
                 ;;
             9)
                 uninstall_database
+                read -p "按Enter键继续..."
+                ;;
+            v|V)
+                toggle_verbose_mode
                 read -p "按Enter键继续..."
                 ;;
             0)
